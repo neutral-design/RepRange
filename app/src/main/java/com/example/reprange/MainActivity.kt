@@ -3,62 +3,23 @@ package com.example.reprange
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.material3.MaterialTheme
-import com.example.reprange.ui.RepsPredictorRoute
+import com.example.reprange.core.data.OfflineWorkoutRepository
+import com.example.reprange.core.data.local.AppDatabase
+import com.example.reprange.features.diary.presentation.DiaryViewModelFactory
+import com.example.reprange.features.diary.ui.DiaryRoute
+import com.example.reprange.ui.theme.RepRangeTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val repository = OfflineWorkoutRepository(AppDatabase.getInstance(applicationContext).workoutDao())
+        val factory = DiaryViewModelFactory(repository)
+
         setContent {
-            MaterialTheme {
-                RepsPredictorRoute()
+            RepRangeTheme {
+                DiaryRoute(factory = factory)
             }
         }
     }
 }
-
-//import android.os.Bundle
-//import androidx.activity.ComponentActivity
-//import androidx.activity.compose.setContent
-//import androidx.activity.enableEdgeToEdge
-//import androidx.compose.foundation.layout.fillMaxSize
-//import androidx.compose.foundation.layout.padding
-//import androidx.compose.material3.Scaffold
-//import androidx.compose.material3.Text
-//import androidx.compose.runtime.Composable
-//import androidx.compose.ui.Modifier
-//import androidx.compose.ui.tooling.preview.Preview
-//import com.example.reprange.ui.theme.RepRangeTheme
-
-//class MainActivity : ComponentActivity() {
-//    override fun onCreate(savedInstanceState: Bundle?) {
-//        super.onCreate(savedInstanceState)
-//        enableEdgeToEdge()
-//        setContent {
-//            RepRangeTheme {
-//                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-//                    Greeting(
-//                        name = "Android",
-//                        modifier = Modifier.padding(innerPadding)
-//                    )
-//                }
-//            }
-//        }
-//    }
-//}
-//
-//@Composable
-//fun Greeting(name: String, modifier: Modifier = Modifier) {
-//    Text(
-//        text = "Hello $name!",
-//        modifier = modifier
-//    )
-//}
-//
-//@Preview(showBackground = true)
-//@Composable
-//fun GreetingPreview() {
-//    RepRangeTheme {
-//        Greeting("Android")
-//    }
-//}
