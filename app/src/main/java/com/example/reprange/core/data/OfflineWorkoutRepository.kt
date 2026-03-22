@@ -1,13 +1,16 @@
 package com.example.reprange.core.data
 
 import com.example.reprange.core.data.local.ExerciseEntryEntity
+import com.example.reprange.core.data.local.ExportSetRow
 import com.example.reprange.core.data.local.ExerciseHistoryRow
 import com.example.reprange.core.data.local.SetEntryEntity
 import com.example.reprange.core.data.local.WorkoutDao
 import com.example.reprange.core.data.local.WorkoutDayEntity
 import com.example.reprange.core.data.local.WorkoutDayWithDetails
 import com.example.reprange.core.data.local.WorkoutSessionEntity
+import com.example.reprange.core.model.AppStats
 import com.example.reprange.core.model.ExerciseLog
+import com.example.reprange.core.model.ExportableSetRow
 import com.example.reprange.core.model.ExerciseHistory
 import com.example.reprange.core.model.ExerciseHistoryEntry
 import com.example.reprange.core.model.LoggedSet
@@ -15,6 +18,7 @@ import com.example.reprange.core.model.WorkoutDay
 import com.example.reprange.core.model.WorkoutSession
 import com.example.reprange.domain.StrengthEstimator
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 
@@ -30,6 +34,28 @@ class OfflineWorkoutRepository(
         return workoutDao.observeWorkoutDates().map { dates ->
             dates.mapTo(linkedSetOf()) { LocalDate.ofEpochDay(it) }
         }
+    }
+
+    override fun observeAppStats(): Flow<AppStats> {
+        return combine(
+            workoutDao.observeWorkoutDayCount(),
+            workoutDao.observeSessionCount(),
+            workoutDao.observeExerciseEntryCount(),
+            workoutDao.observeSetCount(),
+            workoutDao.observeTotalVolumeKg()
+        ) { workoutDays, sessions, exercises, sets, totalVolume ->
+            AppStats(
+                workoutDays = workoutDays,
+                sessions = sessions,
+                exercises = exercises,
+                sets = sets,
+                totalVolumeKg = totalVolume
+            )
+        }
+    }
+
+    override fun observeAllExerciseNames(): Flow<List<String>> {
+        return workoutDao.observeAllExerciseNames()
     }
 
     override fun observeExerciseSuggestions(query: String): Flow<List<String>> {
@@ -50,6 +76,10 @@ class OfflineWorkoutRepository(
         }
     }
 
+    override suspend fun getExportableSetRows(): List<ExportableSetRow> {
+        return workoutDao.getExportRows().map { row -> row.toExportableRow() }
+    }
+
     override suspend fun addExercise(
         date: LocalDate,
         sessionId: Long?,
@@ -59,10 +89,11 @@ class OfflineWorkoutRepository(
     ) {
         val dayId = ensureDay(date)
         val targetSessionId = sessionId ?: workoutDao.getLatestSessionId(dayId) ?: createSession(date)
+        val normalizedName = normalizeExerciseName(exerciseName)
         val exerciseId = workoutDao.insertExercise(
             ExerciseEntryEntity(
                 sessionId = targetSessionId,
-                exerciseName = exerciseName.trim(),
+                exerciseName = normalizedName,
                 sortOrder = workoutDao.getExerciseCount(targetSessionId)
             )
         )
@@ -117,7 +148,7 @@ class OfflineWorkoutRepository(
     override suspend fun renameExercise(exerciseEntryId: Long, newName: String) {
         val sessionId = workoutDao.getSessionIdByExercise(exerciseEntryId) ?: return
         val dayId = workoutDao.getDayIdBySession(sessionId) ?: return
-        workoutDao.updateExerciseName(exerciseEntryId, newName.trim())
+        workoutDao.updateExerciseName(exerciseEntryId, normalizeExerciseName(newName))
         if (workoutDao.hasDay(dayId)) {
             workoutDao.updateDayTimestamp(dayId, System.currentTimeMillis())
         }
@@ -191,6 +222,20 @@ class OfflineWorkoutRepository(
     }
 }
 
+private fun normalizeExerciseName(value: String): String {
+    val trimmed = value.trim()
+    if (trimmed.isEmpty()) {
+        return trimmed
+    }
+    return trimmed.replaceFirstChar { char ->
+        if (char.isLowerCase()) {
+            char.titlecase()
+        } else {
+            char.toString()
+        }
+    }
+}
+
 private fun WorkoutDayWithDetails.toDomain(): WorkoutDay {
     return WorkoutDay(
         id = day.id,
@@ -249,5 +294,19 @@ private fun List<ExerciseHistoryRow>.toExerciseHistory(exerciseName: String): Ex
     return ExerciseHistory(
         exerciseName = exerciseName,
         entries = entries
+    )
+}
+
+private fun ExportSetRow.toExportableRow(): ExportableSetRow {
+    return ExportableSetRow(
+        date = LocalDate.ofEpochDay(dateEpochDay),
+        sessionIndex = sessionSortOrder + 1,
+        sessionStartedAtMillis = sessionStartedAtMillis,
+        exerciseName = exerciseName,
+        exerciseIndex = exerciseSortOrder + 1,
+        setIndex = setSortOrder + 1,
+        reps = reps,
+        weightKg = weightKg,
+        estimatedOneRmKg = estimatedOneRmKg
     )
 }

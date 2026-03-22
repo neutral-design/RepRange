@@ -103,3 +103,26 @@ data class ExerciseProgressPoint(
     val value: Double,
     val label: String
 )
+
+data class AppStats(
+    val workoutDays: Int = 0,
+    val sessions: Int = 0,
+    val exercises: Int = 0,
+    val sets: Int = 0,
+    val totalVolumeKg: Double = 0.0
+)
+
+data class ExportableSetRow(
+    val date: LocalDate,
+    val sessionIndex: Int,
+    val sessionStartedAtMillis: Long,
+    val exerciseName: String,
+    val exerciseIndex: Int,
+    val setIndex: Int,
+    val reps: Int,
+    val weightKg: Double,
+    val estimatedOneRmKg: Double?
+) {
+    val setVolumeKg: Double
+        get() = reps * weightKg
+}

@@ -1,5 +1,6 @@
 package com.example.reprange.features.diary.presentation
 
+import com.example.reprange.core.model.SetRecommendation
 import com.example.reprange.core.model.ExerciseHistory
 import com.example.reprange.core.model.WorkoutDay
 import java.time.LocalDate
@@ -32,6 +33,8 @@ data class DiaryUiState(
     val showAddExerciseDialog: Boolean = false,
     val addExerciseTargetSessionId: Long? = null,
     val setEditorTarget: SetEditorTarget? = null,
+    val setRecommendation: SetRecommendation? = null,
+    val targetReps: Int = 10,
     val exerciseEditorTarget: ExerciseEditorTarget? = null,
     val deleteSessionTarget: DeleteSessionTarget? = null,
     val exerciseQuery: String = "",

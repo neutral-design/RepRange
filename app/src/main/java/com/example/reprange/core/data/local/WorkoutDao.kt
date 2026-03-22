@@ -16,6 +16,21 @@ interface WorkoutDao {
     @Query("SELECT dateEpochDay FROM workout_day ORDER BY dateEpochDay ASC")
     fun observeWorkoutDates(): Flow<List<Long>>
 
+    @Query("SELECT COUNT(*) FROM workout_day")
+    fun observeWorkoutDayCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM workout_session")
+    fun observeSessionCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM exercise_entry")
+    fun observeExerciseEntryCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM set_entry")
+    fun observeSetCount(): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(reps * weightKg), 0) FROM set_entry")
+    fun observeTotalVolumeKg(): Flow<Double>
+
     @Query("SELECT id FROM workout_day WHERE dateEpochDay = :dateEpochDay LIMIT 1")
     suspend fun getDayIdByDate(dateEpochDay: Long): Long?
 
@@ -133,12 +148,46 @@ interface WorkoutDao {
 
     @Query(
         """
-        SELECT DISTINCT exerciseName
+        SELECT exerciseName
+        FROM exercise_entry
+        GROUP BY exerciseName
+        ORDER BY COUNT(*) DESC, MAX(id) DESC, exerciseName COLLATE NOCASE
+        """
+    )
+    fun observeAllExerciseNames(): Flow<List<String>>
+
+    @Query(
+        """
+        SELECT exerciseName
         FROM exercise_entry
         WHERE exerciseName LIKE :prefix ESCAPE '\'
-        ORDER BY exerciseName COLLATE NOCASE
+        GROUP BY exerciseName
+        ORDER BY COUNT(*) DESC, MAX(id) DESC, exerciseName COLLATE NOCASE
         LIMIT 8
         """
     )
     fun observeExerciseSuggestions(prefix: String): Flow<List<String>>
+
+    @Query(
+        """
+        SELECT workout_day.dateEpochDay AS dateEpochDay,
+               workout_session.sortOrder AS sessionSortOrder,
+               workout_session.startedAtMillis AS sessionStartedAtMillis,
+               exercise_entry.exerciseName AS exerciseName,
+               exercise_entry.sortOrder AS exerciseSortOrder,
+               set_entry.sortOrder AS setSortOrder,
+               set_entry.reps AS reps,
+               set_entry.weightKg AS weightKg,
+               set_entry.estimatedOneRmKg AS estimatedOneRmKg
+        FROM set_entry
+        INNER JOIN exercise_entry ON exercise_entry.id = set_entry.exerciseEntryId
+        INNER JOIN workout_session ON workout_session.id = exercise_entry.sessionId
+        INNER JOIN workout_day ON workout_day.id = workout_session.dayId
+        ORDER BY workout_day.dateEpochDay ASC,
+                 workout_session.sortOrder ASC,
+                 exercise_entry.sortOrder ASC,
+                 set_entry.sortOrder ASC
+        """
+    )
+    suspend fun getExportRows(): List<ExportSetRow>
 }

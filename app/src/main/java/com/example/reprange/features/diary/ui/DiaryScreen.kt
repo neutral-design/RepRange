@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,21 +44,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.reprange.core.model.ExerciseHistory
-import com.example.reprange.core.model.ExerciseHistoryEntry
 import com.example.reprange.core.model.ExerciseLog
-import com.example.reprange.core.model.ExerciseProgressPoint
+import com.example.reprange.core.model.SetRecommendation
 import com.example.reprange.core.model.WorkoutDay
 import com.example.reprange.core.model.WorkoutSession
 import com.example.reprange.features.diary.presentation.DeleteSessionTarget
@@ -70,6 +63,9 @@ import com.example.reprange.features.diary.presentation.ExerciseEditorTarget
 import com.example.reprange.features.diary.presentation.SetEditorTarget
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import com.example.reprange.features.shared.ui.ExerciseHistoryOverview
+import com.example.reprange.features.shared.ui.formatDouble
+import com.example.reprange.features.shared.ui.formatSetSummary
 import java.time.DayOfWeek
 import java.time.YearMonth
 import java.time.LocalDate
@@ -79,11 +75,13 @@ import java.time.temporal.TemporalAdjusters
 
 @Composable
 fun DiaryRoute(
-    factory: DiaryViewModelFactory
+    factory: DiaryViewModelFactory,
+    modifier: Modifier = Modifier
 ) {
     val viewModel: DiaryViewModel = viewModel(factory = factory)
     val state by viewModel.uiState.collectAsState()
     DiaryScreen(
+        modifier = modifier,
         state = state,
         onPreviousDay = viewModel::goToPreviousDay,
         onNextDay = viewModel::goToNextDay,
@@ -99,6 +97,7 @@ fun DiaryRoute(
         onEditSet = viewModel::openEditSet,
         onOpenExerciseEditor = viewModel::openExerciseEditor,
         onDismissSetEditor = viewModel::dismissSetEditor,
+        onSetWeightInputChange = viewModel::onSetWeightInputChange,
         onSaveSet = viewModel::saveSet,
         onDeleteSet = viewModel::deleteEditedSet,
         onDismissExerciseEditor = viewModel::dismissExerciseEditor,
@@ -116,6 +115,7 @@ fun DiaryRoute(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun DiaryScreen(
+    modifier: Modifier = Modifier,
     state: DiaryUiState,
     onPreviousDay: () -> Unit,
     onNextDay: () -> Unit,
@@ -131,6 +131,7 @@ fun DiaryScreen(
     onEditSet: (Long, String, Long, Int, Double) -> Unit,
     onOpenExerciseEditor: (Long, String) -> Unit,
     onDismissSetEditor: () -> Unit,
+    onSetWeightInputChange: (String) -> Unit,
     onSaveSet: (Int, Double) -> Unit,
     onDeleteSet: () -> Unit,
     onDismissExerciseEditor: () -> Unit,
@@ -169,16 +170,16 @@ fun DiaryScreen(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
     ) { padding ->
         if (history != null) {
-            ExerciseHistoryScreen(
+            ExerciseHistoryOverview(
                 history = history,
-                modifier = Modifier
+                modifier = modifier
                     .fillMaxSize()
                     .padding(padding)
                     .padding(16.dp)
             )
         } else {
             Column(
-                modifier = Modifier
+                modifier = modifier
                     .fillMaxSize()
                     .padding(padding)
                     .padding(16.dp),
@@ -227,7 +228,9 @@ fun DiaryScreen(
     state.setEditorTarget?.let { target ->
         SetEditorDialog(
             target = target,
+            recommendation = state.setRecommendation,
             onDismiss = onDismissSetEditor,
+            onWeightChange = onSetWeightInputChange,
             onSave = onSaveSet,
             onDelete = onDeleteSet
         )
@@ -445,7 +448,7 @@ private fun ExerciseCard(
                     )
                 },
                 headlineContent = {
-                    Text("Set ${index + 1}: ${formatDouble(set.weightKg, 1)} kg x ${set.reps}")
+                    Text("Set ${index + 1}: ${formatSetSummary(set.weightKg, set.reps)}")
                 },
                 supportingContent = {
                     Text(
@@ -483,9 +486,13 @@ private fun AddExerciseDialog(
             TextButton(
                 onClick = {
                     val reps = repsInput.toIntOrNull()
-                    val weight = weightInput.replace(',', '.').toDoubleOrNull()
-                    if (localName.isBlank() || reps == null || reps <= 0 || weight == null || weight <= 0) {
-                        errorMessage = "Enter exercise name, reps, and weight."
+                    val weight = weightInput
+                        .replace(',', '.')
+                        .takeIf { it.isNotBlank() }
+                        ?.toDoubleOrNull()
+                        ?: 0.0
+                    if (localName.isBlank() || reps == null || reps <= 0 || weight < 0) {
+                        errorMessage = "Enter exercise name and reps. Weight can be blank or 0."
                     } else {
                         onSave(localName.trim(), reps, weight)
                     }
@@ -506,8 +513,9 @@ private fun AddExerciseDialog(
                 OutlinedTextField(
                     value = localName,
                     onValueChange = {
-                        localName = it
-                        onNameChange(it)
+                        val normalized = normalizeExerciseInput(it, localName)
+                        localName = normalized
+                        onNameChange(normalized)
                     },
                     label = { Text("Exercise") },
                     singleLine = true,
@@ -542,7 +550,7 @@ private fun AddExerciseDialog(
                 OutlinedTextField(
                     value = weightInput,
                     onValueChange = { weightInput = it },
-                    label = { Text("Weight (kg)") },
+                    label = { Text("Weight (kg, optional)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -556,13 +564,20 @@ private fun AddExerciseDialog(
 @Composable
 private fun SetEditorDialog(
     target: SetEditorTarget,
+    recommendation: SetRecommendation?,
     onDismiss: () -> Unit,
+    onWeightChange: (String) -> Unit,
     onSave: (Int, Double) -> Unit,
     onDelete: () -> Unit
 ) {
     var repsInput by remember(target) { mutableStateOf(target.reps?.toString().orEmpty()) }
     var weightInput by remember(target) {
-        mutableStateOf(target.weightKg?.let { formatDouble(it, 1) }.orEmpty())
+        mutableStateOf(
+            target.weightKg
+                ?.takeIf { it > 0.0 }
+                ?.let { formatDouble(it, 1) }
+                .orEmpty()
+        )
     }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -572,9 +587,13 @@ private fun SetEditorDialog(
             TextButton(
                 onClick = {
                     val reps = repsInput.toIntOrNull()
-                    val weight = weightInput.replace(',', '.').toDoubleOrNull()
-                    if (reps == null || reps <= 0 || weight == null || weight <= 0) {
-                        errorMessage = "Enter reps and weight."
+                    val weight = weightInput
+                        .replace(',', '.')
+                        .takeIf { it.isNotBlank() }
+                        ?.toDoubleOrNull()
+                        ?: 0.0
+                    if (reps == null || reps <= 0 || weight < 0) {
+                        errorMessage = "Enter reps. Weight can be blank or 0."
                     } else {
                         onSave(reps, weight)
                     }
@@ -609,12 +628,28 @@ private fun SetEditorDialog(
                 )
                 OutlinedTextField(
                     value = weightInput,
-                    onValueChange = { weightInput = it },
-                    label = { Text("Weight (kg)") },
+                    onValueChange = {
+                        weightInput = it
+                        onWeightChange(it)
+                    },
+                    label = { Text("Weight (kg, optional)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                recommendation?.estimatedRepsText?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+                recommendation?.suggestedWeightText?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+                recommendation?.basedOnText?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
@@ -856,214 +891,19 @@ private fun ExerciseEditorDialog(
     )
 }
 
-@Composable
-private fun ExerciseHistoryScreen(
-    history: ExerciseHistory,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text("History overview", style = MaterialTheme.typography.titleMedium)
-                Text("Logged ${history.entries.size} time(s)")
-                Text(
-                    history.highestWeightKg?.let { "Highest weight ${formatDouble(it, 1)} kg" }
-                        ?: "Highest weight unavailable"
-                )
-                Text(
-                    history.highestEstimatedOneRmKg?.let { "Best estimated 1RM ${formatDouble(it, 1)} kg" }
-                        ?: "Best estimated 1RM unavailable"
-                )
-                Text("Total volume ${formatDouble(history.totalVolume, 0)} kg")
-            }
-        }
-
-        if (history.oneRmPoints.isNotEmpty()) {
-            ProgressChartCard(
-                title = "Estimated 1RM over time",
-                points = history.oneRmPoints,
-                valueFormatter = { "${formatDouble(it, 1)} kg" }
-            )
-        }
-
-        if (history.volumePoints.isNotEmpty()) {
-            ProgressChartCard(
-                title = "Volume over time",
-                points = history.volumePoints,
-                valueFormatter = { "${formatDouble(it, 0)} kg" }
-            )
-        }
-
-        if (history.entries.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No history yet for this exercise.")
-            }
-        } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(history.entries, key = { it.exerciseEntryId }) { entry ->
-                    ExerciseHistoryEntryCard(entry = entry)
-                }
-            }
-        }
+private fun normalizeExerciseInput(newValue: String, previousValue: String): String {
+    if (newValue.isEmpty()) {
+        return newValue
     }
-}
-
-@Composable
-private fun ProgressChartCard(
-    title: String,
-    points: List<ExerciseProgressPoint>,
-    valueFormatter: (Double) -> String
-) {
-    val latest = points.lastOrNull()
-    val minValue = points.minOfOrNull { it.value }
-    val maxValue = points.maxOfOrNull { it.value }
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            latest?.let {
-                Text(
-                    text = "Latest ${valueFormatter(it.value)}",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-            if (minValue != null && maxValue != null) {
-                Text(
-                    text = "Range ${valueFormatter(minValue)} - ${valueFormatter(maxValue)}",
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-
-            MiniLineChart(
-                points = points,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(160.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = points.firstOrNull()?.date?.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)).orEmpty(),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Text(
-                    text = points.lastOrNull()?.date?.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)).orEmpty(),
-                    style = MaterialTheme.typography.bodySmall
-                )
+    return if (previousValue.isEmpty()) {
+        newValue.replaceFirstChar { char ->
+            if (char.isLowerCase()) {
+                char.titlecase()
+            } else {
+                char.toString()
             }
         }
+    } else {
+        newValue
     }
-}
-
-@Composable
-private fun MiniLineChart(
-    points: List<ExerciseProgressPoint>,
-    modifier: Modifier = Modifier
-) {
-    val color = MaterialTheme.colorScheme.primary
-    val surfaceVariant = MaterialTheme.colorScheme.surfaceVariant
-
-    Canvas(modifier = modifier) {
-        if (points.isEmpty()) {
-            return@Canvas
-        }
-
-        val horizontalPadding = 18.dp.toPx()
-        val verticalPadding = 20.dp.toPx()
-        val chartWidth = size.width - (horizontalPadding * 2)
-        val chartHeight = size.height - (verticalPadding * 2)
-        if (chartWidth <= 0f || chartHeight <= 0f) {
-            return@Canvas
-        }
-
-        val minValue = points.minOf { it.value }
-        val maxValue = points.maxOf { it.value }
-        val range = (maxValue - minValue).takeIf { it > 0.0 } ?: 1.0
-
-        val offsets = points.mapIndexed { index, point ->
-            val fractionX = if (points.size == 1) 0.5f else index.toFloat() / (points.lastIndex.toFloat())
-            val normalizedY = ((point.value - minValue) / range).toFloat()
-            Offset(
-                x = horizontalPadding + chartWidth * fractionX,
-                y = verticalPadding + chartHeight * (1f - normalizedY)
-            )
-        }
-
-        drawRect(
-            color = surfaceVariant.copy(alpha = 0.5f),
-            topLeft = Offset(horizontalPadding, verticalPadding),
-            size = Size(chartWidth, chartHeight)
-        )
-
-        val linePath = Path().apply {
-            moveTo(offsets.first().x, offsets.first().y)
-            offsets.drop(1).forEach { offset ->
-                lineTo(offset.x, offset.y)
-            }
-        }
-        drawPath(
-            path = linePath,
-            color = color,
-            style = Stroke(width = 3.dp.toPx())
-        )
-
-        offsets.forEach { offset ->
-            drawCircle(
-                color = color,
-                radius = 5.dp.toPx(),
-                center = offset
-            )
-        }
-    }
-}
-
-@Composable
-private fun ExerciseHistoryEntryCard(
-    entry: ExerciseHistoryEntry
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = entry.date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)),
-                style = MaterialTheme.typography.titleSmall
-            )
-            if (entry.sessionSortOrder > 0) {
-                Text(
-                    text = "Session ${entry.sessionSortOrder + 1}",
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-            entry.sets.forEachIndexed { index, set ->
-                Text(
-                    "Set ${index + 1}: ${formatDouble(set.weightKg, 1)} kg x ${set.reps}  |  1RM ${set.estimatedOneRmKg?.let { formatDouble(it, 1) } ?: "-"}"
-                )
-            }
-            Text(
-                text = "Volume ${formatDouble(entry.totalVolume, 0)} kg",
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-    }
-}
-
-private fun formatDouble(value: Double, digits: Int): String {
-    return "%.${digits}f".format(value)
 }

@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.reprange.core.data.WorkoutRepository
+import com.example.reprange.core.model.ExerciseHistory
+import com.example.reprange.core.model.SetRecommendation
+import com.example.reprange.core.settings.AppPreferencesRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,7 +22,8 @@ import java.time.LocalDate
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DiaryViewModel(
-    private val repository: WorkoutRepository
+    private val repository: WorkoutRepository,
+    private val preferencesRepository: AppPreferencesRepository
 ) : ViewModel() {
 
     private val selectedDate = MutableStateFlow(LocalDate.now())
@@ -28,7 +32,16 @@ class DiaryViewModel(
 
     private val dayFlow = selectedDate.flatMapLatest { repository.observeDay(it) }
     private val workoutDatesFlow = repository.observeWorkoutDates()
+    private val targetRepsFlow = preferencesRepository.targetRepsFlow
     private val historyFlow = historyExerciseName.flatMapLatest { exerciseName ->
+        if (exerciseName == null) {
+            flowOf(null)
+        } else {
+            repository.observeExerciseHistory(exerciseName)
+        }
+    }
+    private val recommendationHistoryFlow = chromeState.flatMapLatest { state ->
+        val exerciseName = state.setEditorTarget?.exerciseName
         if (exerciseName == null) {
             flowOf(null)
         } else {
@@ -51,7 +64,9 @@ class DiaryViewModel(
         selectedDate,
         dayFlow,
         workoutDatesFlow,
+        targetRepsFlow,
         historyFlow,
+        recommendationHistoryFlow,
         suggestionFlow,
         chromeState
     ) { values ->
@@ -59,20 +74,28 @@ class DiaryViewModel(
         val workoutDay = values[1] as com.example.reprange.core.model.WorkoutDay?
         @Suppress("UNCHECKED_CAST")
         val workoutDates = values[2] as Set<LocalDate>
-        val exerciseHistory = values[3] as com.example.reprange.core.model.ExerciseHistory?
+        val targetReps = values[3] as Int
+        val exerciseHistory = values[4] as ExerciseHistory?
+        val recommendationHistory = values[5] as ExerciseHistory?
         @Suppress("UNCHECKED_CAST")
-        val suggestions = values[4] as List<String>
-        val chrome = values[5] as DiaryChromeState
+        val suggestions = values[6] as List<String>
+        val chrome = values[7] as DiaryChromeState
         DiaryUiState(
             selectedDate = date,
             workoutDay = workoutDay,
             workoutDates = workoutDates,
+            targetReps = targetReps,
             exerciseHistory = exerciseHistory,
             exerciseSuggestions = suggestions,
             showDatePicker = chrome.showDatePicker,
             showAddExerciseDialog = chrome.showAddExerciseDialog,
             addExerciseTargetSessionId = chrome.addExerciseTargetSessionId,
             setEditorTarget = chrome.setEditorTarget,
+            setRecommendation = buildRecommendation(
+                history = recommendationHistory,
+                inputWeight = chrome.setWeightInput,
+                targetReps = targetReps
+            ),
             exerciseEditorTarget = chrome.exerciseEditorTarget,
             deleteSessionTarget = chrome.deleteSessionTarget,
             exerciseQuery = chrome.exerciseQuery,
@@ -171,6 +194,7 @@ class DiaryViewModel(
         chromeState.update {
             it.copy(
                 setEditorTarget = SetEditorTarget(exerciseId = exerciseId, exerciseName = exerciseName),
+                setWeightInput = "",
                 message = null
             )
         }
@@ -192,13 +216,18 @@ class DiaryViewModel(
                     reps = reps,
                     weightKg = weightKg
                 ),
+                setWeightInput = if (weightKg > 0.0) weightKg.toString() else "",
                 message = null
             )
         }
     }
 
     fun dismissSetEditor() {
-        chromeState.update { it.copy(setEditorTarget = null) }
+        chromeState.update { it.copy(setEditorTarget = null, setWeightInput = "") }
+    }
+
+    fun onSetWeightInputChange(value: String) {
+        chromeState.update { it.copy(setWeightInput = value) }
     }
 
     fun saveSet(reps: Int, weightKg: Double) {
@@ -210,7 +239,7 @@ class DiaryViewModel(
             } else {
                 repository.updateSet(setId, reps, weightKg)
             }
-            chromeState.update { it.copy(setEditorTarget = null) }
+            chromeState.update { it.copy(setEditorTarget = null, setWeightInput = "") }
         }
     }
 
@@ -219,7 +248,7 @@ class DiaryViewModel(
         val setId = target.setId ?: return
         viewModelScope.launch {
             repository.deleteSet(setId)
-            chromeState.update { it.copy(setEditorTarget = null) }
+            chromeState.update { it.copy(setEditorTarget = null, setWeightInput = "") }
         }
     }
 
@@ -303,6 +332,7 @@ private data class DiaryChromeState(
     val showAddExerciseDialog: Boolean = false,
     val addExerciseTargetSessionId: Long? = null,
     val setEditorTarget: SetEditorTarget? = null,
+    val setWeightInput: String = "",
     val exerciseEditorTarget: ExerciseEditorTarget? = null,
     val deleteSessionTarget: DeleteSessionTarget? = null,
     val exerciseQuery: String = "",
@@ -311,13 +341,81 @@ private data class DiaryChromeState(
 )
 
 class DiaryViewModelFactory(
-    private val repository: WorkoutRepository
+    private val repository: WorkoutRepository,
+    private val preferencesRepository: AppPreferencesRepository
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(DiaryViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return DiaryViewModel(repository) as T
+            return DiaryViewModel(repository, preferencesRepository) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }
 }
+
+private fun buildRecommendation(
+    history: ExerciseHistory?,
+    inputWeight: String,
+    targetReps: Int
+): SetRecommendation? {
+    val recentEntries = history?.entries?.take(5).orEmpty()
+    if (recentEntries.isEmpty()) {
+        return null
+    }
+
+    val oneRmValues = recentEntries.flatMap { entry ->
+        entry.sets.mapNotNull { it.estimatedOneRmKg }
+    }.filter { it > 0.0 }
+
+    if (oneRmValues.isEmpty()) {
+        return null
+    }
+
+    val averageOneRm = oneRmValues.average()
+    val weight = inputWeight.replace(',', '.').takeIf { it.isNotBlank() }?.toDoubleOrNull()
+
+    val estimatedRepsText = if (weight != null && weight > 0.0) {
+        val estimatedReps = estimateRepsFromOneRm(weight, averageOneRm)
+        if (estimatedReps != null) {
+            "Recent estimate: about $estimatedReps reps at ${formatWeight(weight)}"
+        } else {
+            null
+        }
+    } else {
+        null
+    }
+
+    val suggestedWeight = estimateWeightForTargetReps(targetReps, averageOneRm)
+    val suggestedWeightText = suggestedWeight?.let {
+        "Suggested for $targetReps reps: ${formatWeight(it)}"
+    }
+
+    return if (estimatedRepsText == null && suggestedWeightText == null) {
+        null
+    } else {
+        SetRecommendation(
+            estimatedRepsText = estimatedRepsText,
+            suggestedWeightText = suggestedWeightText,
+            basedOnText = "Based on ${recentEntries.size} recent logged exercise entries"
+        )
+    }
+}
+
+private fun estimateRepsFromOneRm(weight: Double, oneRm: Double): String? {
+    if (weight <= 0.0 || oneRm <= weight) {
+        return if (weight > 0.0 && oneRm > 0.0) "1-2" else null
+    }
+    val epley = (30.0 * (oneRm / weight - 1.0)).coerceIn(1.0, 30.0)
+    val low = epley.toInt().coerceAtLeast(1)
+    val high = kotlin.math.ceil(epley + 1.5).toInt().coerceAtMost(30)
+    return if (high <= low) low.toString() else "$low-$high"
+}
+
+private fun estimateWeightForTargetReps(targetReps: Int, oneRm: Double): Double? {
+    if (targetReps <= 0 || oneRm <= 0.0) {
+        return null
+    }
+    return oneRm / (1.0 + targetReps / 30.0)
+}
+
+private fun formatWeight(weight: Double): String = "${"%.1f".format(weight)} kg"

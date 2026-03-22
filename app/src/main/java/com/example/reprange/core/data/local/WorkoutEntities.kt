@@ -117,3 +117,15 @@ data class ExerciseHistoryRow(
     val estimatedOneRmKg: Double?,
     val setSortOrder: Int
 )
+
+data class ExportSetRow(
+    val dateEpochDay: Long,
+    val sessionSortOrder: Int,
+    val sessionStartedAtMillis: Long,
+    val exerciseName: String,
+    val exerciseSortOrder: Int,
+    val setSortOrder: Int,
+    val reps: Int,
+    val weightKg: Double,
+    val estimatedOneRmKg: Double?
+)

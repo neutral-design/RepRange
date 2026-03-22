@@ -1,5 +1,7 @@
 package com.example.reprange.core.data
 
+import com.example.reprange.core.model.AppStats
+import com.example.reprange.core.model.ExportableSetRow
 import com.example.reprange.core.model.WorkoutDay
 import com.example.reprange.core.model.ExerciseHistory
 import kotlinx.coroutines.flow.Flow
@@ -10,9 +12,15 @@ interface WorkoutRepository {
 
     fun observeWorkoutDates(): Flow<Set<LocalDate>>
 
+    fun observeAppStats(): Flow<AppStats>
+
+    fun observeAllExerciseNames(): Flow<List<String>>
+
     fun observeExerciseSuggestions(query: String): Flow<List<String>>
 
     fun observeExerciseHistory(exerciseName: String): Flow<ExerciseHistory>
+
+    suspend fun getExportableSetRows(): List<ExportableSetRow>
 
     suspend fun addExercise(
         date: LocalDate,
