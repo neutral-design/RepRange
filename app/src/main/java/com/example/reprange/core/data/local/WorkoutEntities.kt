@@ -105,3 +105,15 @@ data class WorkoutDayWithDetails(
     )
     val sessions: List<WorkoutSessionWithDetails>
 )
+
+data class ExerciseHistoryRow(
+    val dateEpochDay: Long,
+    val sessionStartedAtMillis: Long,
+    val sessionSortOrder: Int,
+    val exerciseEntryId: Long,
+    val setId: Long,
+    val reps: Int,
+    val weightKg: Double,
+    val estimatedOneRmKg: Double?,
+    val setSortOrder: Int
+)

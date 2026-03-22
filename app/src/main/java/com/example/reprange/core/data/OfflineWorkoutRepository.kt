@@ -1,12 +1,15 @@
 package com.example.reprange.core.data
 
 import com.example.reprange.core.data.local.ExerciseEntryEntity
+import com.example.reprange.core.data.local.ExerciseHistoryRow
 import com.example.reprange.core.data.local.SetEntryEntity
 import com.example.reprange.core.data.local.WorkoutDao
 import com.example.reprange.core.data.local.WorkoutDayEntity
 import com.example.reprange.core.data.local.WorkoutDayWithDetails
 import com.example.reprange.core.data.local.WorkoutSessionEntity
 import com.example.reprange.core.model.ExerciseLog
+import com.example.reprange.core.model.ExerciseHistory
+import com.example.reprange.core.model.ExerciseHistoryEntry
 import com.example.reprange.core.model.LoggedSet
 import com.example.reprange.core.model.WorkoutDay
 import com.example.reprange.core.model.WorkoutSession
@@ -23,6 +26,12 @@ class OfflineWorkoutRepository(
         return workoutDao.observeDay(date.toEpochDay()).map { entity -> entity?.toDomain() }
     }
 
+    override fun observeWorkoutDates(): Flow<Set<LocalDate>> {
+        return workoutDao.observeWorkoutDates().map { dates ->
+            dates.mapTo(linkedSetOf()) { LocalDate.ofEpochDay(it) }
+        }
+    }
+
     override fun observeExerciseSuggestions(query: String): Flow<List<String>> {
         val normalized = query.trim()
         if (normalized.isBlank()) {
@@ -33,6 +42,12 @@ class OfflineWorkoutRepository(
             .replace("%", "\\%")
             .replace("_", "\\_")
         return workoutDao.observeExerciseSuggestions("$escaped%")
+    }
+
+    override fun observeExerciseHistory(exerciseName: String): Flow<ExerciseHistory> {
+        return workoutDao.observeExerciseHistory(exerciseName).map { rows ->
+            rows.toExerciseHistory(exerciseName)
+        }
     }
 
     override suspend fun addExercise(
@@ -93,6 +108,28 @@ class OfflineWorkoutRepository(
             workoutDao.deleteSessionById(sessionId)
         }
 
+        workoutDao.deleteDayIfEmpty(dayId)
+        if (workoutDao.hasDay(dayId)) {
+            workoutDao.updateDayTimestamp(dayId, System.currentTimeMillis())
+        }
+    }
+
+    override suspend fun renameExercise(exerciseEntryId: Long, newName: String) {
+        val sessionId = workoutDao.getSessionIdByExercise(exerciseEntryId) ?: return
+        val dayId = workoutDao.getDayIdBySession(sessionId) ?: return
+        workoutDao.updateExerciseName(exerciseEntryId, newName.trim())
+        if (workoutDao.hasDay(dayId)) {
+            workoutDao.updateDayTimestamp(dayId, System.currentTimeMillis())
+        }
+    }
+
+    override suspend fun deleteExercise(exerciseEntryId: Long) {
+        val sessionId = workoutDao.getSessionIdByExercise(exerciseEntryId) ?: return
+        val dayId = workoutDao.getDayIdBySession(sessionId) ?: return
+        workoutDao.deleteExerciseById(exerciseEntryId)
+        if (workoutDao.getExerciseCountForSession(sessionId) == 0) {
+            workoutDao.deleteSessionById(sessionId)
+        }
         workoutDao.deleteDayIfEmpty(dayId)
         if (workoutDao.hasDay(dayId)) {
             workoutDao.updateDayTimestamp(dayId, System.currentTimeMillis())
@@ -181,5 +218,36 @@ private fun WorkoutDayWithDetails.toDomain(): WorkoutDay {
                 }
             )
         }
+    )
+}
+
+private fun List<ExerciseHistoryRow>.toExerciseHistory(exerciseName: String): ExerciseHistory {
+    val entries = groupBy { row ->
+        Triple(row.dateEpochDay, row.sessionSortOrder, row.exerciseEntryId)
+    }.map { (key, rows) ->
+        ExerciseHistoryEntry(
+            exerciseEntryId = key.third,
+            date = LocalDate.ofEpochDay(key.first),
+            sessionStartedAtMillis = rows.first().sessionStartedAtMillis,
+            sessionSortOrder = key.second,
+            sets = rows.sortedBy { it.setSortOrder }.map { row ->
+                LoggedSet(
+                    id = row.setId,
+                    reps = row.reps,
+                    weightKg = row.weightKg,
+                    estimatedOneRmKg = row.estimatedOneRmKg,
+                    sortOrder = row.setSortOrder
+                )
+            }
+        )
+    }.sortedWith(
+        compareByDescending<ExerciseHistoryEntry> { it.date }
+            .thenByDescending { it.sessionSortOrder }
+            .thenByDescending { it.exerciseEntryId }
+    )
+
+    return ExerciseHistory(
+        exerciseName = exerciseName,
+        entries = entries
     )
 }

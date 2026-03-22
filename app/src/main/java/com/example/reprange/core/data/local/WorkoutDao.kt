@@ -13,6 +13,9 @@ interface WorkoutDao {
     @Query("SELECT * FROM workout_day WHERE dateEpochDay = :dateEpochDay LIMIT 1")
     fun observeDay(dateEpochDay: Long): Flow<WorkoutDayWithDetails?>
 
+    @Query("SELECT dateEpochDay FROM workout_day ORDER BY dateEpochDay ASC")
+    fun observeWorkoutDates(): Flow<List<Long>>
+
     @Query("SELECT id FROM workout_day WHERE dateEpochDay = :dateEpochDay LIMIT 1")
     suspend fun getDayIdByDate(dateEpochDay: Long): Long?
 
@@ -36,6 +39,9 @@ interface WorkoutDao {
 
     @Insert
     suspend fun insertExercise(exercise: ExerciseEntryEntity): Long
+
+    @Query("UPDATE exercise_entry SET exerciseName = :exerciseName WHERE id = :exerciseEntryId")
+    suspend fun updateExerciseName(exerciseEntryId: Long, exerciseName: String)
 
     @Query("SELECT COUNT(*) FROM set_entry WHERE exerciseEntryId = :exerciseEntryId")
     suspend fun getSetCount(exerciseEntryId: Long): Int
@@ -80,6 +86,9 @@ interface WorkoutDao {
     @Query("SELECT sessionId FROM exercise_entry WHERE id = :exerciseEntryId LIMIT 1")
     suspend fun getSessionIdByExercise(exerciseEntryId: Long): Long?
 
+    @Query("SELECT exerciseName FROM exercise_entry WHERE id = :exerciseEntryId LIMIT 1")
+    suspend fun getExerciseNameById(exerciseEntryId: Long): String?
+
     @Query("SELECT dayId FROM workout_session WHERE id = :sessionId LIMIT 1")
     suspend fun getDayIdBySession(sessionId: Long): Long?
 
@@ -100,6 +109,27 @@ interface WorkoutDao {
 
     @Query("SELECT COUNT(*) FROM exercise_entry WHERE sessionId = :sessionId")
     suspend fun getExerciseCountForSession(sessionId: Long): Int
+
+    @Query(
+        """
+        SELECT workout_day.dateEpochDay AS dateEpochDay,
+               workout_session.startedAtMillis AS sessionStartedAtMillis,
+               workout_session.sortOrder AS sessionSortOrder,
+               exercise_entry.id AS exerciseEntryId,
+               set_entry.id AS setId,
+               set_entry.reps AS reps,
+               set_entry.weightKg AS weightKg,
+               set_entry.estimatedOneRmKg AS estimatedOneRmKg,
+               set_entry.sortOrder AS setSortOrder
+        FROM exercise_entry
+        INNER JOIN workout_session ON workout_session.id = exercise_entry.sessionId
+        INNER JOIN workout_day ON workout_day.id = workout_session.dayId
+        INNER JOIN set_entry ON set_entry.exerciseEntryId = exercise_entry.id
+        WHERE exercise_entry.exerciseName = :exerciseName
+        ORDER BY workout_day.dateEpochDay DESC, workout_session.sortOrder DESC, exercise_entry.id DESC, set_entry.sortOrder ASC
+        """
+    )
+    fun observeExerciseHistory(exerciseName: String): Flow<List<ExerciseHistoryRow>>
 
     @Query(
         """

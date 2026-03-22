@@ -51,3 +51,55 @@ data class LoggedSet(
     val volume: Double
         get() = reps * weightKg
 }
+
+data class ExerciseHistory(
+    val exerciseName: String,
+    val entries: List<ExerciseHistoryEntry>
+) {
+    val highestWeightKg: Double?
+        get() = entries.flatMap { it.sets }.maxOfOrNull { it.weightKg }
+
+    val highestEstimatedOneRmKg: Double?
+        get() = entries.flatMap { it.sets }.maxOfOrNull { it.estimatedOneRmKg ?: 0.0 }?.takeIf { it > 0.0 }
+
+    val totalVolume: Double
+        get() = entries.sumOf { entry -> entry.sets.sumOf { it.volume } }
+
+    val oneRmPoints: List<ExerciseProgressPoint>
+        get() = entries.mapNotNull { entry ->
+            val bestOneRm = entry.sets.maxOfOrNull { it.estimatedOneRmKg ?: 0.0 }?.takeIf { it > 0.0 }
+            bestOneRm?.let {
+                ExerciseProgressPoint(
+                    date = entry.date,
+                    value = it,
+                    label = "${entry.date} - 1RM ${"%.1f".format(it)} kg"
+                )
+            }
+        }.sortedBy { it.date }
+
+    val volumePoints: List<ExerciseProgressPoint>
+        get() = entries.map { entry ->
+            ExerciseProgressPoint(
+                date = entry.date,
+                value = entry.totalVolume,
+                label = "${entry.date} - Volume ${"%.0f".format(entry.totalVolume)} kg"
+            )
+        }.sortedBy { it.date }
+}
+
+data class ExerciseHistoryEntry(
+    val exerciseEntryId: Long,
+    val date: LocalDate,
+    val sessionStartedAtMillis: Long,
+    val sessionSortOrder: Int,
+    val sets: List<LoggedSet>
+) {
+    val totalVolume: Double
+        get() = sets.sumOf { it.volume }
+}
+
+data class ExerciseProgressPoint(
+    val date: LocalDate,
+    val value: Double,
+    val label: String
+)

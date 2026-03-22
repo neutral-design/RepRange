@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -23,8 +24,17 @@ class DiaryViewModel(
 
     private val selectedDate = MutableStateFlow(LocalDate.now())
     private val chromeState = MutableStateFlow(DiaryChromeState())
+    private val historyExerciseName = MutableStateFlow<String?>(null)
 
     private val dayFlow = selectedDate.flatMapLatest { repository.observeDay(it) }
+    private val workoutDatesFlow = repository.observeWorkoutDates()
+    private val historyFlow = historyExerciseName.flatMapLatest { exerciseName ->
+        if (exerciseName == null) {
+            flowOf(null)
+        } else {
+            repository.observeExerciseHistory(exerciseName)
+        }
+    }
 
     @OptIn(FlowPreview::class)
     private val suggestionFlow = chromeState
@@ -40,17 +50,30 @@ class DiaryViewModel(
     val uiState = combine(
         selectedDate,
         dayFlow,
+        workoutDatesFlow,
+        historyFlow,
         suggestionFlow,
         chromeState
-    ) { date, workoutDay, suggestions, chrome ->
+    ) { values ->
+        val date = values[0] as LocalDate
+        val workoutDay = values[1] as com.example.reprange.core.model.WorkoutDay?
+        @Suppress("UNCHECKED_CAST")
+        val workoutDates = values[2] as Set<LocalDate>
+        val exerciseHistory = values[3] as com.example.reprange.core.model.ExerciseHistory?
+        @Suppress("UNCHECKED_CAST")
+        val suggestions = values[4] as List<String>
+        val chrome = values[5] as DiaryChromeState
         DiaryUiState(
             selectedDate = date,
             workoutDay = workoutDay,
+            workoutDates = workoutDates,
+            exerciseHistory = exerciseHistory,
             exerciseSuggestions = suggestions,
             showDatePicker = chrome.showDatePicker,
             showAddExerciseDialog = chrome.showAddExerciseDialog,
             addExerciseTargetSessionId = chrome.addExerciseTargetSessionId,
             setEditorTarget = chrome.setEditorTarget,
+            exerciseEditorTarget = chrome.exerciseEditorTarget,
             deleteSessionTarget = chrome.deleteSessionTarget,
             exerciseQuery = chrome.exerciseQuery,
             isSaving = chrome.isSaving,
@@ -211,6 +234,53 @@ class DiaryViewModel(
         }
     }
 
+    fun openExerciseEditor(exerciseId: Long, exerciseName: String) {
+        chromeState.update {
+            it.copy(
+                exerciseEditorTarget = ExerciseEditorTarget(
+                    exerciseId = exerciseId,
+                    exerciseName = exerciseName
+                ),
+                message = null
+            )
+        }
+    }
+
+    fun dismissExerciseEditor() {
+        chromeState.update { it.copy(exerciseEditorTarget = null) }
+    }
+
+    fun renameExercise(newName: String) {
+        val target = chromeState.value.exerciseEditorTarget ?: return
+        viewModelScope.launch {
+            repository.renameExercise(target.exerciseId, newName)
+            chromeState.update { it.copy(exerciseEditorTarget = null) }
+            if (historyExerciseName.value == target.exerciseName) {
+                historyExerciseName.value = newName.trim()
+            }
+        }
+    }
+
+    fun deleteExercise() {
+        val target = chromeState.value.exerciseEditorTarget ?: return
+        viewModelScope.launch {
+            repository.deleteExercise(target.exerciseId)
+            chromeState.update { it.copy(exerciseEditorTarget = null) }
+            if (historyExerciseName.value == target.exerciseName) {
+                historyExerciseName.value = null
+            }
+        }
+    }
+
+    fun openExerciseHistory(exerciseName: String) {
+        historyExerciseName.value = exerciseName
+        chromeState.update { it.copy(exerciseEditorTarget = null) }
+    }
+
+    fun closeExerciseHistory() {
+        historyExerciseName.value = null
+    }
+
     fun dismissDeleteSession() {
         chromeState.update { it.copy(deleteSessionTarget = null) }
     }
@@ -233,6 +303,7 @@ private data class DiaryChromeState(
     val showAddExerciseDialog: Boolean = false,
     val addExerciseTargetSessionId: Long? = null,
     val setEditorTarget: SetEditorTarget? = null,
+    val exerciseEditorTarget: ExerciseEditorTarget? = null,
     val deleteSessionTarget: DeleteSessionTarget? = null,
     val exerciseQuery: String = "",
     val isSaving: Boolean = false,

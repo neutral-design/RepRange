@@ -1,13 +1,18 @@
 package com.example.reprange.core.data
 
 import com.example.reprange.core.model.WorkoutDay
+import com.example.reprange.core.model.ExerciseHistory
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
 
 interface WorkoutRepository {
     fun observeDay(date: LocalDate): Flow<WorkoutDay?>
 
+    fun observeWorkoutDates(): Flow<Set<LocalDate>>
+
     fun observeExerciseSuggestions(query: String): Flow<List<String>>
+
+    fun observeExerciseHistory(exerciseName: String): Flow<ExerciseHistory>
 
     suspend fun addExercise(
         date: LocalDate,
@@ -30,6 +35,10 @@ interface WorkoutRepository {
     )
 
     suspend fun deleteSet(setId: Long)
+
+    suspend fun renameExercise(exerciseEntryId: Long, newName: String)
+
+    suspend fun deleteExercise(exerciseEntryId: Long)
 
     suspend fun deleteSession(sessionId: Long)
 
